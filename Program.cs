@@ -1,17 +1,19 @@
 ﻿using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using CliWrap;
 
 namespace fuck {
     class Program {
         private static Config? _config;
-        private static Dictionary<string, Process> _keepAliveProcesses = new();
+        private static Dictionary<string, Command> _keepAliveCommands = new();
+        private static Dictionary<string, CancellationTokenSource> _keepAliveCts = new();
         private static int mp2_found_hasAlreadyPrinted = -1;
         private static int mp1_found_hasAlreadyPrinted = -1;
         private static readonly string ConfigPath = "config.json";
         private static bool _programsStarted = false;
 
-        static void Main(string[] args) {
+        static async Task Main(string[] args) {
             Console.OutputEncoding = Encoding.UTF8;
             Console.WriteLine();
             const string header =
@@ -36,7 +38,7 @@ namespace fuck {
                 return;
             }
 
-            monitorMain();
+            await monitorMain();
         }
 
         private static void loadConfig() {
@@ -62,6 +64,7 @@ namespace fuck {
                 createDefaultConfig();
             }
         }
+
         private static void createDefaultConfig() {
             _config = new Config
             {
@@ -83,6 +86,11 @@ namespace fuck {
             Console.ReadKey();
             Environment.Exit(0);
         }
+
+        private static Process? findProcess(string processName) {
+            return Process.GetProcessesByName(Path.GetFileNameWithoutExtension(processName)).FirstOrDefault();
+        }
+
         private static bool shouldStartPrograms(Process? mainProcess, Process? mainProcess2) {
             if (_config == null) return false;
 
@@ -95,6 +103,7 @@ namespace fuck {
                 _ => false
             };
         }
+
         private static bool shouldExitPrograms(Process? mainProcess, Process? mainProcess2) {
             if (_config == null) return false;
 
@@ -108,63 +117,84 @@ namespace fuck {
             };
         }
 
-        private static void monitorMain() {
-            while (true) {
+        private static async Task monitorMain() {
+            using var cts = new CancellationTokenSource();
+
+            Process? mainProcess = null;
+            Process? mainProcess2 = null;
+
+            while (!cts.Token.IsCancellationRequested) {
                 if (_config == null) {
                     Console.WriteLine("fix your config fucker. (a)");
                     return;
                 }
 
-                Process? mainProcess = getProcessByName(Path.GetFileNameWithoutExtension(_config.mainProgram));
-                Process? mainProcess2 = getProcessByName(Path.GetFileNameWithoutExtension(_config.mainProgram2));
+                try {
+                    mainProcess = findProcess(_config.mainProgram);
+                    mainProcess2 = findProcess(_config.mainProgram2);
 
-                if (mainProcess?.Id != mp1_found_hasAlreadyPrinted && mainProcess != null) {
-                    Console.WriteLine($"found {_config.mainProgram} pid {mainProcess.Id}");
-                    mp1_found_hasAlreadyPrinted = mainProcess.Id;
-                }
+                    if (mainProcess?.Id != mp1_found_hasAlreadyPrinted && mainProcess != null) {
+                        Console.WriteLine($"found {_config.mainProgram} pid {mainProcess.Id}");
+                        mp1_found_hasAlreadyPrinted = mainProcess.Id;
+                    }
+                    
+                    if (mainProcess2?.Id != mp2_found_hasAlreadyPrinted && mainProcess2 != null) {
+                        Console.WriteLine($"found {_config.mainProgram2} pid {mainProcess2.Id}");
+                        mp2_found_hasAlreadyPrinted = mainProcess2.Id;
+                    }
 
-                if (mainProcess2?.Id != mp2_found_hasAlreadyPrinted && mainProcess2 != null) {
-                    Console.WriteLine($"found {_config.mainProgram2} pid {mainProcess2.Id}");
-                    mp2_found_hasAlreadyPrinted = mainProcess2.Id;
-                }
+                    if (!_programsStarted && shouldStartPrograms(mainProcess, mainProcess2)) {
+                        await runPrograms(_config.onStart, cts.Token);
+                        await runAllKeepAlives(cts.Token);
+                        _programsStarted = true;
+                    }
 
-                if (!_programsStarted && shouldStartPrograms(mainProcess, mainProcess2)) {
-                    runPrograms(_config.onStart);
-                    runAllKeepAlives();
-                    _programsStarted = true;
-                }
+                    if (_programsStarted && shouldExitPrograms(mainProcess, mainProcess2)) {
+                        await killPrograms(_config.killOnExit);
+                        Console.WriteLine();
+                        Console.WriteLine($"exiting since ({_config.mainProgram} {_config.exitGate} {_config.mainProgram2}) has exited.");
+                        Console.ReadKey();
+                        break;
+                    }
 
+                    if (_programsStarted) {
+                        foreach (var program in _config.keepAlive) {
+                            var processName = Path.GetFileNameWithoutExtension(program);
+                            var process = Process.GetProcessesByName(processName).FirstOrDefault();
 
-                if (_programsStarted && shouldExitPrograms(mainProcess, mainProcess2)) {
-                    killPrograms(_config.killOnExit);
-                    Console.WriteLine();
-                    Console.WriteLine($"exiting since ({_config.mainProgram} {_config.exitGate} {_config.mainProgram2}) has exited.");
-                    Console.ReadKey();
+                            if (process == null || process.HasExited) {
+                                Console.WriteLine($"keep-alive process {program} is not running anymore");
+                                if (_keepAliveCommands.ContainsKey(program)) {
+                                    _keepAliveCts[program].Cancel();
+                                    _keepAliveCommands.Remove(program);
+                                    _keepAliveCts.Remove(program);
+                                }
+                                await runKeepAlive(program, cts.Token);
+                            }
+                        }
+                    }
+
+                    await Task.Delay(_config.delay, cts.Token);
+                } catch (OperationCanceledException) {
                     break;
+                } catch (Exception ex) {
+                    Console.WriteLine($"Error: {ex.Message}");
+                    await Task.Delay(1000, cts.Token);
                 }
-
-                if (_programsStarted) {
-                    monitorAllKeepAlive();
-                }
-
-                Thread.Sleep(_config.delay);
             }
         }
-        private static Process? getProcessByName(string processName) {
-            return Process.GetProcessesByName(processName).FirstOrDefault();
-        }
-        private static void killPrograms(IEnumerable<string>? programs) {
+
+        private static async Task killPrograms(IEnumerable<string>? programs) {
             if (programs == null) return;
 
             foreach (var program in programs) {
                 try {
                     var processName = Path.GetFileNameWithoutExtension(program);
-
                     var processes = Process.GetProcessesByName(processName);
 
                     foreach (var process in processes) {
                         process.Kill();
-                        process.WaitForExit();
+                        await process.WaitForExitAsync();
                         Console.WriteLine($"killed {processName} pid {process.Id}");
                     }
                 } catch (Exception ex) {
@@ -173,71 +203,53 @@ namespace fuck {
             }
         }
 
-        private static void runPrograms(IEnumerable<string>? programs) {
+        private static async Task runPrograms(IEnumerable<string>? programs, CancellationToken cancellationToken) {
             if (programs == null) return;
 
             foreach (var program in programs) {
                 try {
-                    Process.Start(program);
+                    await Cli.Wrap(program).WithValidation(CommandResultValidation.None).ExecuteAsync(cancellationToken);
                 } catch (Exception ex) {
                     Console.WriteLine($"failed to start {program}: {ex.Message}");
                 }
             }
         }
 
-        private static void runAllKeepAlives() {
+        private static async Task runAllKeepAlives(CancellationToken cancellationToken) {
             if (_config == null) return;
 
-            var keepAlivePrograms = _config.keepAlive.ToList();
-
-            foreach (var program in keepAlivePrograms) {
-                if (_keepAliveProcesses.ContainsKey(program)) continue;
-
-                runKeepAlive(program);
+            foreach (var program in _config.keepAlive) {
+                if (_keepAliveCommands.ContainsKey(program)) continue;
+                await runKeepAlive(program, cancellationToken);
             }
         }
 
-        private static void runKeepAlive(string program) {
+        private static async Task runKeepAlive(string program, CancellationToken cancellationToken) {
             try {
-                var process = Process.Start(program);
-                if (process == null) return;
+                var cts = new CancellationTokenSource();
+                _keepAliveCts[program] = cts;
 
-                _keepAliveProcesses[program] = process;
-                Console.WriteLine($"started keep-alive: {program}");
+                var cmd = Cli.Wrap(program).WithValidation(CommandResultValidation.None);
+                _keepAliveCommands[program] = cmd;
+
+                var task = cmd.ExecuteAsync(cts.Token);
+                Console.WriteLine($"started keep-alive: {program} pid {task.ProcessId}");
+
+                _ = Task.Run(async () => {
+                    try {
+                        await task;
+                    } catch (OperationCanceledException) { } catch (Exception ex) {
+                        Console.WriteLine($"keep-alive {program} exited: {ex.Message}");
+                        _keepAliveCommands.Remove(program);
+                        _keepAliveCts.Remove(program);
+                        if (!cancellationToken.IsCancellationRequested) {
+                            await runKeepAlive(program, cancellationToken);
+                        }
+                    }
+                }, cancellationToken);
             } catch (Exception ex) {
                 Console.WriteLine($"failed to start keep-alive {program}: {ex.Message}");
             }
         }
-
-        private static void monitorAllKeepAlive() {
-            if (_config == null) return;
-
-            var keepAlivePrograms = _config.keepAlive.ToList();
-
-            foreach (var program in keepAlivePrograms) {
-                if (!_keepAliveProcesses.ContainsKey(program)) { runKeepAlive(program); continue; }
-
-                var process = _keepAliveProcesses[program];
-                process.Refresh();
-                if (!process.HasExited) return;
-
-                try {
-                    if (process.TotalProcessorTime.TotalSeconds < 0.1) {
-                        var newOSC = getProcessByName("VRCOSC");
-                        if (newOSC != null) {
-                            Console.WriteLine("found new vrcosc process");
-                            _keepAliveProcesses[program] = newOSC;
-                        }
-                    } else {
-                        Console.WriteLine($"keep-alive {program} exited. restarting.");
-                        _keepAliveProcesses.Remove(program);
-                        runKeepAlive(program);
-                    }
-                } catch (InvalidOperationException) {
-                    runKeepAlive(program);
-                }
-            }
-        }
     }
-
 }
