@@ -1,0 +1,47 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <PublishAot>true</PublishAot>
+    <Nullable>enable</Nullable>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+	<UseSystemResourceKeys>true</UseSystemResourceKeys>
+    <AssemblyName>Mggaow App</AssemblyName>
+    <RootNamespace>mggaow</RootNamespace>
+    <DebuggerSupport>false</DebuggerSupport>
+    <SignAssembly>false</SignAssembly>
+    <ErrorReport>none</ErrorReport>
+    <Version>8.1.1.1</Version>
+    <Copyright>CBT Inc.</Copyright>
+<OptimizationPreference>Size</OptimizationPreference>
+<InvariantGlobalization>true</InvariantGlobalization>
+<StripSymbols>true</StripSymbols>
+<EnableUnsafeUTF7Encoding>false</EnableUnsafeUTF7Encoding>
+<XmlResolverIsNetworkingEnabledByDefault>false</XmlResolverIsNetworkingEnabledByDefault>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+    <IncludeSymbolsInSingleFile>false</IncludeSymbolsInSingleFile>
+    <StackTraceSupport>false</StackTraceSupport>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
+    <DebugType>portable</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="CliWrap" Version="3.6.6" />
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.11.4" />
+    <PackageReference Include="Microsoft.CodeAnalysis" Version="4.11.0" />
+    <PackageReference Include="Microsoft.Net.Compilers.Toolset" Version="4.11.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="System.Formats.Asn1" Version="8.0.1" />
+    <PackageReference Include="System.Text.Encodings.Web" Version="9.0.0-rc.1.24431.7" />
+    <PackageReference Include="System.Text.Json" Version="9.0.0-rc.1.24431.7" />
+  </ItemGroup>
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="echo Release@@Any CPU&#xD;&#xA;if &quot;$(ConfigurationName)&quot; == &quot;Release&quot; (if &quot;$(PlatformName)&quot; == &quot;AnyCPU&quot; (&quot;$(ProjectDir)_Obfuscar\Obfuscar.Console.exe&quot; &quot;$(ProjectDir)_Obfuscar\obfuscar_Release_Any_CPU.xml&quot;&#xD;&#xA;xcopy /e /v &quot;$(ProjectDir)bin\Release\net9.0\\Out\&quot; &quot;$(ProjectDir)bin\Release\net9.0\&quot; /Y))" />
+  </Target>
+</Project>
